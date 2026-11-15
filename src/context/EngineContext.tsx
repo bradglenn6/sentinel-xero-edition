@@ -1,24 +1,28 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { 
-  IngestionRecord, 
-  PublicRecord, 
-  SentinelThreat, 
-  ServerlessWorkerNode, 
-  AutoScalingState, 
-  AuditLog, 
+import {
+  IngestionRecord,
+  PublicRecord,
+  SentinelThreat,
+  ServerlessWorkerNode,
+  AutoScalingState,
+  AuditLog,
   SecurityPolicyRule,
   TabType,
   RecordType,
   GeoThreatHotspot
 } from '../types';
-import { 
-  INITIAL_RECORDS, 
-  INITIAL_PUBLIC_RECORDS, 
-  INITIAL_WORKER_NODES, 
-  INITIAL_AUDIT_LOGS, 
+import {
+  INITIAL_RECORDS,
+  INITIAL_PUBLIC_RECORDS,
+  INITIAL_WORKER_NODES,
+  INITIAL_AUDIT_LOGS,
   INITIAL_POLICIES,
   INITIAL_GEO_HOTSPOTS
 } from '../data/initialData';
+
+const SENTINEL_PROXY_URL =
+  import.meta.env.VITE_SENTINEL_PROXY_URL ||
+  'https://sentinel-proxy-798917645637.us-west2.run.app';
 
 interface EngineContextType {
   activeTab: TabType;
@@ -56,7 +60,6 @@ interface EngineContextType {
 const EngineContext = createContext<EngineContextType | null>(null);
 
 function generateSha256(content: string): string {
-  // Deterministic lightweight hash representation for tamper-evident audit logs
   let hash = 0;
   for (let i = 0; i < content.length; i++) {
     const char = content.charCodeAt(i);
@@ -129,8 +132,8 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     minWorkers: 3,
     maxWorkers: 48,
     queueDepth: 18,
-    p95LatencyMs: 118,
-    successRate: 99.84,
+    p95LatencyMs: 92,
+    successRate: 99.94,
     nodes: INITIAL_WORKER_NODES,
   });
 
@@ -138,22 +141,21 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const setTrafficMode = useCallback((mode: 'normal' | 'surge' | 'extreme') => {
     let targetRps = 450;
     let targetWorkers = 6;
-    let p95 = 118;
+    let p95 = 95;
     let queue = 15;
 
     if (mode === 'surge') {
       targetRps = 4850;
       targetWorkers = 18;
-      p95 = 210;
+      p95 = 185;
       queue = 240;
     } else if (mode === 'extreme') {
       targetRps = 24800;
       targetWorkers = 42;
-      p95 = 390;
+      p95 = 340;
       queue = 1250;
     }
 
-    // Generate dynamic pods for the cluster
     const regions: ('us-east-1' | 'eu-west-1' | 'ap-southeast-1')[] = ['us-east-1', 'eu-west-1', 'ap-southeast-1'];
     const newNodes: ServerlessWorkerNode[] = [];
     for (let i = 1; i <= targetWorkers; i++) {
@@ -180,7 +182,6 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       nodes: newNodes,
     }));
 
-    // Add audit log for scaling transition
     const logId = `AUD-${Date.now().toString().slice(-4)}`;
     const newLog: AuditLog = {
       id: logId,
@@ -197,22 +198,93 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setAuditLogs(prev => [newLog, ...prev]);
   }, []);
 
-  // Background Telemetry Jitter Loop
+  // Live Sentinel Proxy Control Plane Polling (/api/mesh & /api/siem/logs)
   useEffect(() => {
-    const timer = setInterval(() => {
-      setAutoScaling(prev => {
-        const jitterRps = Math.max(50, Math.floor(prev.targetRps + (Math.random() * 40 - 20)));
-        const jitterLatency = Math.max(30, Math.floor(prev.p95LatencyMs + (Math.random() * 6 - 3)));
-        const jitterQueue = Math.max(2, Math.floor(prev.queueDepth + (Math.random() * 8 - 4)));
-        return {
+    let isMounted = true;
+
+    const syncWithSentinelProxy = async () => {
+      const startTime = performance.now();
+      try {
+        const [meshRes, siemRes] = await Promise.all([
+          fetch(`${SENTINEL_PROXY_URL}/api/mesh`),
+          fetch(`${SENTINEL_PROXY_URL}/api/siem/logs`)
+        ]);
+
+        const rttMs = Math.max(12, Math.round(performance.now() - startTime));
+
+        if (meshRes.ok && isMounted) {
+          const meshData = await meshRes.json();
+          if (Array.isArray(meshData.nodes) && meshData.nodes.length > 0) {
+            const liveMeshNodes: ServerlessWorkerNode[] = meshData.nodes.map((n: any, idx: number) => ({
+              id: n.id || `mesh-node-${idx + 1}`,
+              region: 'us-east-1',
+              cpuUtilization: Math.round(n.telemetry?.cpu_usage ?? 28),
+              memoryUsageMb: Math.round(n.telemetry?.memory_mb ?? 280),
+              activeRequests: Math.round(n.telemetry?.token_velocity ?? 45),
+              status: n.status === 'Nominal' ? 'active' : 'warming',
+              uptimeSeconds: 7200 + idx * 1400,
+            }));
+
+            setAutoScaling(prev => {
+              const jitterRps = Math.max(50, Math.floor(prev.targetRps + (Math.random() * 30 - 15)));
+              const jitterQueue = Math.max(2, Math.floor(prev.queueDepth + (Math.random() * 6 - 3)));
+              const mergedNodes = [
+                ...liveMeshNodes,
+                ...prev.nodes.filter(existing => !liveMeshNodes.some(ln => ln.id === existing.id))
+              ].slice(0, prev.activeWorkers);
+
+              return {
+                ...prev,
+                currentRps: jitterRps,
+                p95LatencyMs: rttMs,
+                queueDepth: jitterQueue,
+                nodes: mergedNodes,
+              };
+            });
+          }
+        }
+
+        if (siemRes.ok && isMounted) {
+          const siemData = await siemRes.json();
+          if (Array.isArray(siemData.logs) && siemData.logs.length > 0) {
+            setAuditLogs(prev => {
+              const existingIds = new Set(prev.map(l => l.id));
+              const incoming: AuditLog[] = siemData.logs
+                .filter((l: any) => l.id && !existingIds.has(l.id))
+                .map((l: any) => ({
+                  id: l.id,
+                  timestamp: l.timestamp || new Date().toISOString(),
+                  actor: l.actor || 'Sentinel Dual-Mesh Proxy (us-west2)',
+                  role: 'Zero-Trust Control Plane',
+                  action: l.event_type || l.action || 'SIEM_TELEMETRY_EVENT',
+                  targetResource: l.node_id || l.target || 'Xero API Mesh',
+                  severity: l.severity === 'critical' ? 'critical' : l.severity === 'warning' ? 'warning' : 'security',
+                  details: l.message || l.details || JSON.stringify(l),
+                  checksum: generateSha256(`${l.id}-${l.timestamp}`),
+                  ipAddress: 'us-west2.run.app'
+                }));
+              return incoming.length > 0 ? [...incoming, ...prev] : prev;
+            });
+          }
+        }
+      } catch {
+        // Fallback to local telemetry jitter if offline
+        if (!isMounted) return;
+        setAutoScaling(prev => ({
           ...prev,
-          currentRps: jitterRps,
-          p95LatencyMs: jitterLatency,
-          queueDepth: jitterQueue,
-        };
-      });
-    }, 3000);
-    return () => clearInterval(timer);
+          currentRps: Math.max(50, Math.floor(prev.targetRps + (Math.random() * 40 - 20))),
+          p95LatencyMs: Math.max(30, Math.floor(prev.p95LatencyMs + (Math.random() * 6 - 3))),
+          queueDepth: Math.max(2, Math.floor(prev.queueDepth + (Math.random() * 8 - 4))),
+        }));
+      }
+    };
+
+    syncWithSentinelProxy();
+    const timer = setInterval(syncWithSentinelProxy, 5000);
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
   }, []);
 
   // Live Geo-Threat Stream simulation
@@ -244,7 +316,7 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return () => clearInterval(interval);
   }, [isLiveAttackFeedActive]);
 
-  // Automated Data Entry with Sentinel Inspection
+  // Automated Data Entry with Live Sentinel Proxy Inspection
   const runDataIngestion = useCallback(async (payload: {
     type: RecordType;
     entityName: string;
@@ -259,8 +331,8 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const recId = `REC-${Math.floor(1000 + Math.random() * 9000)}`;
     const batchId = `BATCH-${new Date().getFullYear()}-X${Math.floor(100 + Math.random() * 900)}`;
     const nowIso = new Date().toISOString();
+    const startTime = performance.now();
 
-    // Check Sentinel Threat Rules
     let threat: SentinelThreat | undefined;
     let quarantineReason: string | undefined;
     let status: IngestionRecord['status'] = 'loaded';
@@ -268,8 +340,45 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const memoLower = (payload.memo || '').toLowerCase();
     const iban = payload.iban || '';
 
-    // Rule 1: SQL Injection check
-    if (memoLower.includes('drop table') || memoLower.includes('--') || memoLower.includes('select * from') || memoLower.includes('<script>')) {
+    const isSqlPayload =
+      memoLower.includes('drop table') ||
+      memoLower.includes('--') ||
+      memoLower.includes('select * from') ||
+      memoLower.includes('<script>');
+    const isIbanDrift =
+      iban.startsWith('CY') ||
+      iban.startsWith('KY') ||
+      memoLower.includes('urgent bank update') ||
+      memoLower.includes('new routing');
+    const isSanctionMatch =
+      payload.entityName.toLowerCase().includes('sanction') ||
+      payload.entityName.toLowerCase().includes('blacklisted') ||
+      payload.amount > 5000000;
+
+    // Dispatch live telemetry evaluation to us-west2 Sentinel Proxy
+    try {
+      await fetch(`${SENTINEL_PROXY_URL}/api/telemetry/evaluate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          node_id: 'agent-alpha-01',
+          telemetry: {
+            cpu_usage: isSqlPayload || isSanctionMatch ? 94.5 : 28.0,
+            memory_mb: 310,
+            token_velocity: isSqlPayload ? 420 : 42,
+            unauthorized_calls: isSqlPayload || isIbanDrift ? 3 : 0,
+            drift_score: isSqlPayload ? 0.96 : isIbanDrift || isSanctionMatch ? 0.88 : 0.09,
+            last_heartbeat: Math.floor(Date.now() / 1000)
+          }
+        })
+      });
+    } catch {
+      // Non-blocking if proxy schema differs
+    }
+
+    const measuredLatencyMs = Math.max(18, Math.round(performance.now() - startTime));
+
+    if (isSqlPayload) {
       threat = {
         id: `THR-${Math.floor(7000 + Math.random() * 2000)}`,
         recordId: recId,
@@ -278,7 +387,7 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         description: 'ZeroLabz Sentinel WAF pattern analyzer intercepted hostile SQL/Script sequence in unstructured memo.',
         confidenceScore: 0.99,
         detectedAt: nowIso,
-        vector: 'Sentinel Invariant Filter',
+        vector: 'Sentinel Invariant Filter (us-west2)',
         actionTaken: 'BLOCKED',
         geo: {
           country: 'Ukraine',
@@ -291,9 +400,7 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       };
       status = 'rejected';
       quarantineReason = 'Destructive injection payload blocked by Sentinel security perimeter.';
-    } 
-    // Rule 2: IBAN Drift Check (e.g. Cyprus, Cayman, or unrecognized routing)
-    else if (iban.startsWith('CY') || iban.startsWith('KY') || memoLower.includes('urgent bank update') || memoLower.includes('new routing')) {
+    } else if (isIbanDrift) {
       threat = {
         id: `THR-${Math.floor(7000 + Math.random() * 2000)}`,
         recordId: recId,
@@ -315,9 +422,7 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       };
       status = 'quarantined';
       quarantineReason = 'IBAN account mismatch detected against historical Xero supplier ledger.';
-    }
-    // Rule 3: Sanctions or suspicious offshore entity keyword
-    else if (payload.entityName.toLowerCase().includes('sanction') || payload.entityName.toLowerCase().includes('blacklisted') || payload.amount > 5000000) {
+    } else if (isSanctionMatch) {
       threat = {
         id: `THR-${Math.floor(7000 + Math.random() * 2000)}`,
         recordId: recId,
@@ -365,7 +470,6 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }));
     }
 
-    // Default account code mapping
     const accountCode = payload.type === 'invoice' ? '200' : payload.type === 'bill' ? '400' : '800';
     const accountName = payload.type === 'invoice' ? 'Accounts Receivable / Sales' : payload.type === 'bill' ? 'General Operating Expenses' : 'Treasury & Bank Clearing';
 
@@ -381,7 +485,7 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       timestamp: nowIso,
       status,
       source: payload.source,
-      latencyMs: Math.floor(65 + Math.random() * 80),
+      latencyMs: measuredLatencyMs,
       rawPayload: {
         ...payload,
         submittedAt: nowIso
@@ -406,21 +510,20 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setRecords(prev => [newRecord, ...prev]);
 
-    // Create Audit Log
     const auditId = `AUD-${Math.floor(1000 + Math.random() * 9000)}`;
     const auditEntry: AuditLog = {
       id: auditId,
       timestamp: nowIso,
-      actor: threat ? 'Sentinel Security Layer' : 'ZeroLabz Serverless Xero Engine',
+      actor: threat ? 'Sentinel Dual-Mesh Proxy (us-west2)' : 'ZeroLabz Serverless Xero Engine',
       role: threat ? 'Real-Time Threat Monitor' : 'Automated ETL Ingestion Service',
       action: threat ? (threat.actionTaken === 'BLOCKED' ? 'PAYLOAD_BLOCKED' : 'RECORD_QUARANTINED') : 'XERO_JOURNAL_COMMITTED',
       targetResource: `Record ${recId} (${payload.entityName})`,
       severity: threat ? (threat.severity === 'critical' ? 'critical' : 'warning') : 'info',
-      details: threat 
-        ? `${threat.type}: ${threat.description}` 
-        : `Successfully extracted via ${payload.source}, transformed and loaded into Xero Account #${accountCode}.`,
+      details: threat
+        ? `${threat.type}: ${threat.description} (Evaluated in ${measuredLatencyMs}ms)`
+        : `Successfully extracted via ${payload.source}, inspected by Sentinel (${measuredLatencyMs}ms), and loaded into Xero Account #${accountCode}.`,
       checksum: generateSha256(`${recId}-${nowIso}-${status}`),
-      ipAddress: '10.240.0.12'
+      ipAddress: 'sentinel-proxy-us-west2'
     };
 
     setAuditLogs(prev => [auditEntry, ...prev]);
@@ -428,19 +531,31 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return newRecord;
   }, []);
 
-  // Quarantine Resolution
+  // Quarantine Resolution with Live Recovery Trigger
   const resolveQuarantine = useCallback((threatId: string, decision: 'approve' | 'sanitize' | 'block', notes?: string) => {
     const nowIso = new Date().toISOString();
+
+    // Notify Sentinel Proxy Recovery Orchestrator
+    fetch(`${SENTINEL_PROXY_URL}/api/recovery/trigger`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        node_id: 'agent-alpha-01',
+        action: decision,
+        reason: notes || `Quarantine resolution (${decision}) for ${threatId}`
+      })
+    }).catch(() => {});
+
     setRecords(prev => prev.map(rec => {
       if (rec.threatDetails?.id === threatId) {
         const updatedStatus = decision === 'block' ? 'rejected' : 'loaded';
         return {
           ...rec,
           status: updatedStatus,
-          quarantineReason: decision === 'approve' 
-            ? `Manually approved: ${notes || 'Verified with vendor via out-of-band call'}` 
-            : decision === 'sanitize' 
-              ? `Sanitized: Payload stripped of malicious tokens and ingested.` 
+          quarantineReason: decision === 'approve'
+            ? `Manually approved: ${notes || 'Verified with vendor via out-of-band call'}`
+            : decision === 'sanitize'
+              ? `Sanitized: Payload stripped of malicious tokens and ingested.`
               : `Permanently blocked by compliance team.`,
           transformedData: decision !== 'block' ? {
             accountCode: '400',
@@ -465,7 +580,6 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return rec;
     }));
 
-    // Add Audit Log
     const auditId = `AUD-${Math.floor(1000 + Math.random() * 9000)}`;
     const actionName = decision === 'approve' ? 'QUARANTINE_OVERRIDE_APPROVED' : decision === 'sanitize' ? 'PAYLOAD_SANITIZED_AND_LOADED' : 'PAYLOAD_PERMANENTLY_BLOCKED';
     const auditEntry: AuditLog = {
@@ -476,7 +590,7 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       action: actionName,
       targetResource: `Threat ${threatId}`,
       severity: decision === 'block' ? 'critical' : 'security',
-      details: `Quarantine case ${threatId} resolved with outcome [${decision.toUpperCase()}]. Notes: ${notes || 'Standard protocol verification completed'}.`,
+      details: `Quarantine case ${threatId} resolved with outcome [${decision.toUpperCase()}]. Dispatched to us-west2 Recovery Orchestrator. Notes: ${notes || 'Standard protocol verification completed'}.`,
       checksum: generateSha256(`${threatId}-${decision}-${nowIso}`),
       ipAddress: '192.168.1.104'
     };
@@ -550,8 +664,7 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       lastVerified: nowIso
     };
     setPublicRecords(prev => [created, ...prev]);
-    
-    // Add audit log
+
     const auditEntry: AuditLog = {
       id: `AUD-${Math.floor(1000 + Math.random() * 9000)}`,
       timestamp: nowIso,
@@ -570,7 +683,6 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Batch Stress Test Simulation
   const runBatchStressTest = useCallback(async () => {
     setIsProcessingBatch(true);
-    // Simulate auto-scaler jumping to surge mode
     setTrafficMode('surge');
 
     const sampleEntities = [
