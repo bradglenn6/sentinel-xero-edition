@@ -1,34 +1,50 @@
-# ZeroLabz Sentinel: Xero Edition
+# ZeroLabz Sentinel — Xero Edition
 
-> **Sub-millisecond AI guardrail reverse proxy, WAF invariant engine, and real-time telemetry built specifically for Xero and financial ledgers.**
+[![Deploy Sentinel Xero Edition](https://github.com/bradglenn6/sentinel-xero-edition/actions/workflows/deploy.yml/badge.svg)](https://github.com/bradglenn6/sentinel-xero-edition/actions/workflows/deploy.yml)
+[![Live Production](https://img.shields.io/badge/Production-xero.zrolabz.com-00e5ff?style=flat&logo=googlecloud)](https://xero.zrolabz.com)
+[![Control Plane](https://img.shields.io/badge/Control_Plane-us--west2_Dual--Mesh-10b981?style=flat&logo=rust)](https://sentinel-proxy-798917645637.us-west2.run.app/v1/healthz)
+[![ORCID](https://img.shields.io/badge/ORCID-0000--0002--5071--9051-a6ce39?style=flat&logo=orcid)](https://orcid.org/0000-0002-5071-9051)
 
-[![npm version](https://img.shields.io/npm/v/@zerolabz/sentinel-xero.svg)](https://www.npmjs.com/package/@zerolabz/sentinel-xero)
-[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
-[![CI/CD Pipeline](https://github.com/bradglenn6/zerolabz-sentinel-xero/actions/workflows/ci.yml/badge.svg)](https://github.com/bradglenn6/zerolabz-sentinel-xero/actions)
-
----
-
-## Overview
-
-**ZeroLabz Sentinel: Xero Edition** is a specialized serverless security and compliance proxy engineered to safeguard accounting ETL pipelines, automated data entry, and financial ledgers against zero-day exploits, Business Email Compromise (BEC), IBAN routing drift, and OFAC sanctions violations. 
-
-Built as an extension of the ZeroLabz core threat engine, it intercepts incoming API transactions and invoice payloads in sub-millisecond timeframes, enforcing strict stateful security invariants before they hit your core accounting workflows.
+**ZeroLabz Sentinel (Xero Edition)** is an enterprise serverless ETL, financial ledger reconciliation, and real-time zero-trust security command platform. It inspects incoming OCR invoices, supplier bank feeds, and statutory public filings before payloads reach the Xero accounting API—blocking SQL injection payloads, IBAN routing drift (Business Email Compromise), and OFAC sanctions matches at sub-millisecond to low-millisecond edge latency.
 
 ---
 
-## Key Features
+## Live Endpoints
 
-* **Ledger Invariant Enforcement:** Inspects journal entries, bills, and invoices for anomalies, double-spending patterns, and unauthorized account modifications.
-* **BEC & IBAN Fraud Detection:** Real-time heuristic scanning to prevent fraudulent vendor payout reroutes.
-* **OFAC Sanctions Screening:** Automated screening of counterparty names, addresses, and tax identifiers against restricted lists.
-* **Real-Time D3 Threat Telemetry:** Live geospatial map visualization and dashboard monitoring for anomalous IP traffic and failed authentication attempts.
-* **Cloud-Native & Serverless:** Designed for seamless deployment on Google Cloud Run with secret management via Google Secret Manager.
+| Environment | URL | Region | Role |
+| :--- | :--- | :--- | :--- |
+| **Production Dashboard (Custom Domain)** | [`https://xero.zrolabz.com`](https://xero.zrolabz.com) | `us-central1` | Primary Frontend Command Center |
+| **Cloud Run Service URL** | [`https://sentinel-xero-service-ssqdynq7cq-uc.a.run.app`](https://sentinel-xero-service-ssqdynq7cq-uc.a.run.app) | `us-central1` | Containerized Static Edge Ingress |
+| **Sentinel Dual-Mesh Control Plane** | [`https://sentinel-proxy-798917645637.us-west2.run.app`](https://sentinel-proxy-798917645637.us-west2.run.app) | `us-west2` | Rust Axum Telemetry, SIEM & Recovery Proxy |
 
 ---
 
-## Installation
+## Core Architecture & Capabilities
 
-Install the package via npm into your Node.js / TypeScript environment:
+* **Real-Time Dual-Mesh Control Plane Integration:** Actively polls the Rust `sentinel-xero-dual-mesh` backend (`/api/mesh`, `/api/siem/logs`, `/v1/healthz`) to synchronize live worker telemetry (`agent-alpha-01`, `agent-beta-02`), CPU/memory utilization, token velocity, and round-trip P95 latency.
+* **Inline Financial Threat Invariant Engine (`/api/telemetry/evaluate`):**
+  * **SQLi & Hostile Payload Filtering:** Detects and blocks destructive SQL/script sequences in unstructured invoice memos prior to ledger transformation.
+  * **Vendor IBAN Drift Detection:** Quarantines unverified offshore routing shifts (`CY`, `KY`, urgent wire overrides) against historical supplier ledgers.
+  * **OFAC & High-Velocity Screening:** Flags sanctioned entities and high-value anomalies for dual compliance sign-off.
+* **Autonomous Quarantine & Recovery Orchestration (`/api/recovery/trigger`):** Dispatches compliance review decisions (`approve`, `sanitize`, `block`) to the `us-west2` recovery orchestrator while recording tamper-evident SHA-256 checksums in the immutable Audit Ledger.
+* **Statutory Public Records Connector:** Cross-references SEC EDGAR and Companies House filings against Xero vendor directories.
+* **Zero-Trust CI/CD Pipeline:** Automated GitHub Actions deployment authenticating via Google Cloud Workload Identity Federation (OIDC) -> Cloud Build -> Artifact Registry -> Cloud Run.
 
+---
+
+## Local Development
+
+### Prerequisites
+* **Node.js** >= 20.x
+* **npm** >= 10.x
+
+### Setup & Run
 ```bash
-npm install @zerolabz/sentinel-xero
+# Install dependencies
+npm install
+
+# Start Vite development server with hot reload
+npm run dev
+
+# Compile TypeScript & production bundle
+npm run build
