@@ -1,0 +1,6 @@
+{
+  "name": "ZeroLabz Sentinel: Xero Edition",
+  "description": "Sub-millisecond AI guardrail reverse proxy, WAF invariant engine, and real-time threat telemetry built specifically for Xero and financial ledgers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
