@@ -32,4 +32,18 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
 
       - name: Build and Deploy via Cloud Build
-        run: gcloud builds submit --config cloudbuild.yaml --suppress-logs .
+        run: |
+          BUILD_ID=$(gcloud builds submit --config cloudbuild.yaml --async --format="value(id)" .)
+          echo "Triggered Cloud Build ID: $BUILD_ID"
+          while true; do
+            STATUS=$(gcloud builds describe "$BUILD_ID" --format="value(status)")
+            echo "Current build status: $STATUS"
+            if [ "$STATUS" = "SUCCESS" ]; then
+              echo "Deployment succeeded!"
+              exit 0
+            elif [ "$STATUS" = "FAILURE" ] || [ "$STATUS" = "INTERNAL_ERROR" ] || [ "$STATUS" = "TIMEOUT" ] || [ "$STATUS" = "CANCELLED" ]; then
+              echo "Build failed with status: $STATUS"
+              exit 1
+            fi
+            sleep 10
+          done
