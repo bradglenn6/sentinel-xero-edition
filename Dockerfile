@@ -1,6 +1,5 @@
 # ==============================================================================
 # ZeroLabz Sentinel: Xero Edition - Production Dockerfile
-# Multi-stage build for optimized image size and secure runtime execution
 # ==============================================================================
 
 # --- Stage 1: Build Stage ---
@@ -20,7 +19,7 @@ RUN npm ci --legacy-peer-deps
 # Copy source code
 COPY . .
 
-# Build application (compiles TypeScript and bundles static assets)
+# Build application (compiles TypeScript and bundles static assets via Vite)
 RUN npm run build
 
 # --- Stage 2: Production Runtime Stage ---
@@ -40,8 +39,10 @@ RUN addgroup --system --gid 1001 zerolabz && \
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
 
-# Install production dependencies safely
-RUN npm ci --only=production --legacy-peer-deps && npm cache clean --force
+# Install production dependencies safely AND install 'serve' to host the UI
+RUN npm ci --only=production --legacy-peer-deps && \
+    npm install -g serve && \
+    npm cache clean --force
 
 # Change ownership to non-root user
 USER sentinel
@@ -49,5 +50,5 @@ USER sentinel
 # Expose Cloud Run default port
 EXPOSE 8080
 
-# Start the application server
-CMD ["node", "dist/index.js"]
+# Serve the static React frontend on port 8080
+CMD ["serve", "-s", "dist", "-l", "8080"]
