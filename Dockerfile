@@ -14,8 +14,8 @@ RUN apk add --no-cache build-base python3
 # Copy package descriptors
 COPY package*.json ./
 
-# Install all dependencies (including devDependencies for TypeScript compilation)
-RUN npm ci
+# Install all dependencies (bypassing peer dependency conflicts)
+RUN npm ci --legacy-peer-deps
 
 # Copy source code
 COPY . .
@@ -39,7 +39,9 @@ RUN addgroup --system --gid 1001 zerolabz && \
 # Copy built artifacts and production dependencies from builder stage
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+
+# Install production dependencies safely
+RUN npm ci --only=production --legacy-peer-deps && npm cache clean --force
 
 # Change ownership to non-root user
 USER sentinel
