@@ -1,0 +1,56 @@
+name: FIPS 203 Cryptographic Policy Gate
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  conftest-crypto-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Conftest v0.71.1
+        run: |
+          CONFTEST_VERSION="0.71.1"
+          curl -sSL "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" \
+            | tar xz -C /usr/local/bin conftest
+          conftest --version
+
+      - name: Run Rego policy unit tests
+        run: conftest verify --policy policy/
+
+      - name: Evaluate repo configs against FIPS 203 gate
+        id: conftest
+        continue-on-error: true
+        run: |
+          TARGETS=()
+          [ -f cloudbuild.yaml ] && TARGETS+=("cloudbuild.yaml")
+          [ -f Dockerfile ] && TARGETS+=("Dockerfile")
+          [ -f sentinel.toml ] && TARGETS+=("sentinel.toml")
+
+          if [ ${#TARGETS[@]} -eq 0 ]; then
+            echo "No target config files found."
+            exit 0
+          fi
+
+          conftest test "${TARGETS[@]}" --policy policy/ --output sarif > fips203-gate.sarif || true
+          conftest test "${TARGETS[@]}" --policy policy/
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always() && hashFiles('fips203-gate.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: fips203-gate.sarif
+
+      - name: Enforce policy gate verdict
+        if: steps.conftest.outcome == 'failure'
+        run: exit 1
