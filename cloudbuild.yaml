@@ -44,3 +44,6 @@ steps:
 images:
   - us-central1-docker.pkg.dev/gen-lang-client-0973854052/zerolabz-registry/sentinel-xero:latest
   - us-central1-docker.pkg.dev/gen-lang-client-0973854052/zerolabz-registry/sentinel-xero:$BUILD_ID
+
+options:
+  logging: CLOUD_LOGGING_ONLY
