@@ -27,11 +27,12 @@ jobs:
         run: |
           cdxgen \
             --include-crypto \
+            --deep \
             --spec-version 1.7 \
             --evidence \
             --author "Bradley Jones (ZeroLabz)" \
-            -o cbom.json \
-            .
+            -o "${GITHUB_WORKSPACE}/cbom.json" \
+            "${GITHUB_WORKSPACE}"
 
       - name: Enrich CRA/CISA manufacturer & security contact metadata
         run: |
@@ -80,5 +81,4 @@ jobs:
         with:
           name: sentinel-xero-cbom-${{ github.sha }}
           path: cbom.json
-          archive: false
           retention-days: 90
