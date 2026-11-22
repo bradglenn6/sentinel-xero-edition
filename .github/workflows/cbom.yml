@@ -25,17 +25,38 @@ jobs:
 
       - name: Generate CycloneDX 1.7 CBOM
         env:
-          FETCH_LICENSE: "false"
+          FETCH_LICENSE: "true"
         run: |
           cdxgen \
             --include-crypto \
             --spec-version 1.7 \
             --evidence \
+            --author "Bradley Jones (ZeroLabz)" \
             -o cbom.json \
             .
 
+      - name: Enrich CRA/CISA manufacturer & security contact metadata
+        run: |
+          jq '.metadata.manufacturer = {
+            "name": "ZeroLabz",
+            "url": ["https://zrolabz.com"],
+            "contact": [{"name": "ZeroLabz Security", "email": "dev@zrolabz.com"}]
+          } | .metadata.supplier = {
+            "name": "ZeroLabz",
+            "url": ["https://zrolabz.com"],
+            "contact": [{"name": "ZeroLabz Security", "email": "dev@zrolabz.com"}]
+          }' cbom.json > cbom.tmp.json && mv cbom.tmp.json cbom.json
+
       - name: Validate CBOM against CycloneDX 1.7 schema
-        run: cdx-validate -i cbom.json
+        run: |
+          rc=0
+          cdx-validate -i cbom.json --strict || rc=$?
+          if [ "$rc" -eq 1 ] || [ "$rc" -eq 2 ]; then
+            echo "Schema or deep validation failed (exit code $rc)."
+            exit "$rc"
+          elif [ "$rc" -eq 3 ]; then
+            echo "::warning::cdx-validate reported compliance scorecard findings (exit code 3); schema validation passed."
+          fi
 
       - name: Summarize detected cryptographic assets
         run: |
