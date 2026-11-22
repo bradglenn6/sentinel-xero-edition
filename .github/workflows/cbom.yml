@@ -1,0 +1,65 @@
+name: Generate CycloneDX CBOM
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate-cbom:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install @cdxgen/cdxgen (CycloneDX 1.7 CBOM)
+        run: |
+          npm install -g @cdxgen/cdxgen --ignore-scripts
+          cdxgen --version
+
+      - name: Generate CycloneDX 1.7 CBOM
+        env:
+          FETCH_LICENSE: "false"
+        run: |
+          cdxgen \
+            --include-crypto \
+            --spec-version 1.7 \
+            --evidence \
+            -o cbom.json \
+            .
+
+      - name: Validate CBOM against CycloneDX 1.7 schema
+        run: cdx-validate -i cbom.json
+
+      - name: Summarize detected cryptographic assets
+        run: |
+          echo "### CycloneDX 1.7 CBOM Summary" >> "$GITHUB_STEP_SUMMARY"
+          TOTAL=$(jq '[.components[]? | select(.type == "cryptographic-asset")] | length' cbom.json)
+          echo "**Cryptographic assets discovered:** ${TOTAL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$TOTAL" -gt 0 ]; then
+            echo "| Name | Asset Type | Primitive | NIST Quantum Level |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| :--- | :--- | :--- | :--- |" >> "$GITHUB_STEP_SUMMARY"
+            jq -r '
+              .components[]?
+              | select(.type == "cryptographic-asset")
+              | "| \(.name // "unknown") | \(.cryptoProperties.assetType // "-") | \(.cryptoProperties.algorithmProperties.primitive // "-") | \(.cryptoProperties.algorithmProperties.nistQuantumSecurityLevel // "0") |"
+            ' cbom.json >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "_No explicit cryptographic-asset components detected in static scan._" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload CycloneDX CBOM artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sentinel-xero-cbom-${{ github.sha }}
+          path: cbom.json
+          archive: false
+          retention-days: 90
