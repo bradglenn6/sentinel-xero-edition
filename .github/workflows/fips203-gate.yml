@@ -1,10 +1,9 @@
 name: FIPS 203 Cryptographic Policy Gate
 
 on:
-  push:
-    branches: [master, main]
   pull_request:
     branches: [master, main]
+  workflow_call:
   workflow_dispatch:
 
 permissions:

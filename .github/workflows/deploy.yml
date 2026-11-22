@@ -2,18 +2,25 @@ name: Deploy Sentinel Xero Edition
 
 on:
   push:
-    branches:
-      - master
+    branches: [master]
+  workflow_dispatch:
 
 env:
   PROJECT_ID: gen-lang-client-0973854052
 
 jobs:
+  conftest-crypto-gate:
+    uses: ./.github/workflows/fips203-gate.yml
+    permissions:
+      contents: read
+      security-events: write
+
   deploy:
+    needs: conftest-crypto-gate
     runs-on: ubuntu-latest
     permissions:
-      contents: 'read'
-      id-token: 'write' # Required for Workload Identity Federation OIDC
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout repository
@@ -41,7 +48,7 @@ jobs:
             if [ "$STATUS" = "SUCCESS" ]; then
               echo "Deployment succeeded!"
               exit 0
-            elif [ "$STATUS" = "FAILURE" ] || [ "$STATUS" = "INTERNAL_ERROR" ] || [ "$STATUS" = "TIMEOUT" ] || [ "$STATUS" = "CANCELLED" ]; then
+            elif [ "$STATUS" = "FAILURE" ] || [ "$STATUS" = "INTERNAL_ERROR" ] || [ "$STATUS" = "TIMEOUT" ] || [ "$STATUS" = "CANCELLED" ] || [ "$STATUS" = "EXPIRED" ]; then
               echo "Build failed with status: $STATUS"
               exit 1
             fi
