@@ -15,8 +15,13 @@ jobs:
       contents: read
       security-events: write
 
+  generate-cbom:
+    uses: ./.github/workflows/cbom.yml
+    permissions:
+      contents: read
+
   deploy:
-    needs: conftest-crypto-gate
+    needs: [conftest-crypto-gate, generate-cbom]
     runs-on: ubuntu-latest
     permissions:
       contents: read

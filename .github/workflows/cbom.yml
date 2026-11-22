@@ -1,8 +1,6 @@
 name: Generate CycloneDX CBOM
 
 on:
-  push:
-    branches: [master, main]
   pull_request:
     branches: [master, main]
   workflow_call:
