@@ -42,9 +42,8 @@ jobs:
           fi
 
           conftest test "${TARGETS[@]}" --policy policy/ --output sarif > fips203-gate.sarif || true
-          jq '(.runs[].results) |= map(select(.kind != "pass" and (.message.text | test("Policy was satisfied successfully") | not)))' conftest.sarif > conftest.tmp && mv conftest.tmp conftest.sarif
+          jq '(.runs[].results) |= map(select(.kind != "pass" and ((.message.text // "") | test("Policy was satisfied successfully") | not)))' fips203-gate.sarif > fips203-gate.tmp && mv fips203-gate.tmp fips203-gate.sarif
           conftest test "${TARGETS[@]}" --policy policy/
-          jq '(.runs[].results) |= map(select(.kind != "pass" and (.message.text | test("Policy was satisfied successfully") | not)))' conftest.sarif > conftest.tmp && mv conftest.tmp conftest.sarif
 
       - name: Upload SARIF to GitHub Code Scanning
         if: always() && hashFiles('fips203-gate.sarif') != ''
